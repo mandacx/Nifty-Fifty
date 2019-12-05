@@ -28,6 +28,7 @@ for dir in dirs:
 	Data.append(pd.read_csv(dir))
 
 os.chdir(owd)
+print(Data[4].Symbol[1])
 Train = Data[4].Close.values
 scaler = MinMaxScaler(feature_range=(0, 1))
 Train = scaler.fit_transform(Train[:, np.newaxis])
