@@ -25,9 +25,9 @@ dirs = os.listdir()
 
 Data = []
 for dir in dirs:
-    Data.append(pd.read_csv(dir))
-    #Data[-1:].set_index("Date", drop=False, inplace=True)
+	Data.append(pd.read_csv(dir))
 
+os.chdir(owd)
 Train = Data[4].Close.values
 scaler = MinMaxScaler(feature_range=(0, 1))
 Train = scaler.fit_transform(Train[:, np.newaxis])
@@ -52,7 +52,7 @@ model = Sequential()
 model.add(LSTM(4, input_shape=(1, look_back)))
 model.add(Dense(1))
 model.compile(loss='mean_squared_error', optimizer='adam')
-model.fit(trainX, trainY, epochs=1, batch_size=1, verbose=1)
+model.fit(trainX, trainY, epochs=100, batch_size=1, verbose=1)
 
 trainPredict = model.predict(trainX)
 testPredict = model.predict(testX)
