@@ -22,14 +22,12 @@ def create_dataset(dataset, look_back=1):
 owd = os.getcwd()
 os.chdir('nifty50-stock-market-data')
 dirs = os.listdir()
+dirs = 'MM.csv'
 
-Data = []
-for dir in dirs:
-	Data.append(pd.read_csv(dir))
+Data = (pd.read_csv(dirs))
 
 os.chdir(owd)
-print(Data[4].Symbol[1])
-Train = Data[4].Close.values
+Train = Data.Close.values
 scaler = MinMaxScaler(feature_range=(0, 1))
 Train = scaler.fit_transform(Train[:, np.newaxis])
 
