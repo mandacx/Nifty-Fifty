@@ -1,83 +1,132 @@
-import os
-import pandas as pd
-import matplotlib.pyplot as plt
+from datetime import *
+import pandas_datareader.data as data
 import numpy as np
+import pandas as pd
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import adfuller
+import matplotlib.pyplot as plt
+from statsmodels.tsa.arima_model import ARIMA
 import math as m
-
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
-from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import LSTM, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 
-def create_dataset(dataset, look_back=1):
-	dataX, dataY = [], []
-	for i in range(len(dataset)-look_back-1):
-		a = dataset[i:(i+look_back), 0]
-		dataX.append(a)
-		dataY.append(dataset[i + look_back, 0])
-	return np.array(dataX), np.array(dataY)
 
-owd = os.getcwd()
-os.chdir('nifty50-stock-market-data')
-dirs = os.listdir()
-dirs = 'MM.csv'
 
-Data = (pd.read_csv(dirs))
+def split_sequences(share, n_steps, target, look_ahead=7, start=datetime(2005, 6, 1), end=datetime.now(), ):
+	dataset = data.DataReader(share, 'yahoo', start, end)
+	cols = dataset.columns
 
-os.chdir(owd)
-Train = Data.Close.values
-scaler = MinMaxScaler(feature_range=(0, 1))
-Train = scaler.fit_transform(Train[:, np.newaxis])
+	index = dataset.index[n_steps+look_ahead-1:]
+	dataset = dataset.values
+	maxes = np.max(dataset, axis=0)
+	mins = np.min(dataset, axis=0)
+	ranges = maxes - mins
+	dataset = (dataset - mins) / ranges
+	#scaler.fit_transform(dataset)
+	dataset = pd.DataFrame(dataset, columns = cols)
 
-# split into train and test sets
-train_size = int(len(Train) * 0.67)
-test_size = len(Train) - train_size
-train, test = Train[0:train_size,:], Train[train_size:len(Train),:]
+	X, y = list(), list()
+	for i in range(len(dataset)):
+		# find the end of this pattern
+		end_ix = i + n_steps
+		# check if we are beyond the dataset
+		if end_ix+look_ahead-1 > len(dataset)-1:
+			break
+		# gather input and output parts of the pattern
 
-plt.plot(train)
-plt.plot(test)
-plt.show()
+		seq_x = dataset[i:end_ix].values
+		seq_y = dataset[end_ix+look_ahead-1: end_ix+look_ahead][target].values
 
-look_back = 1
-trainX, trainY = create_dataset(train, look_back)
-testX, testY = create_dataset(test, look_back)
+		X.append(seq_x)
+		y.append(seq_y)
+	X=np.asarray(X)
+	y=np.asarray(y)
 
-trainX = np.reshape(trainX, (trainX.shape[0], 1, trainX.shape[1]))
-testX = np.reshape(testX, (testX.shape[0], 1, testX.shape[1]))
+	return X, y, ranges, mins, index
 
+def plot_history(history):
+    keys = history.history.keys()
+    # eprint(keys)
+    for key in filter(lambda k:"val_" not in k,  keys):
+        plt.plot(history.history[key])
+        plt.plot(history.history['val_'+key ])
+        plt.title( key)
+        plt.ylabel('key')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'validation'], loc='upper right')
+        plt.show()
+
+def inverse_scale(x, range, min, index=2):
+	return x*range[index]+min[index]
+
+def get_data(share):
+	x, y, ranges, mins, index = split_sequences(share = share, n_steps=32, target='Open')
+
+	train_split = 0.9
+	train_split = int(x.shape[0]*train_split)
+	x_train, y_train = x[:train_split], y[:train_split]
+	x_test, y_test = x[train_split:], y[train_split:]
+	return x_train, y_train, x_test, y_test, ranges, mins, index
+
+x_train, y_train, x_test, y_test, ranges, mins, index = get_data('PMO.L')
+# define model
 model = Sequential()
-model.add(LSTM(4, input_shape=(1, look_back)))
-model.add(Dense(1))
-model.compile(loss='mean_squared_error', optimizer='adam')
-model.fit(trainX, trainY, epochs=100, batch_size=1, verbose=1)
-
-trainPredict = model.predict(trainX)
-testPredict = model.predict(testX)
-# invert predictions
-trainPredict = scaler.inverse_transform(trainPredict)
-trainY = scaler.inverse_transform([trainY])
-testPredict = scaler.inverse_transform(testPredict)
-testY = scaler.inverse_transform([testY])
-# calculate root mean squared error
-trainScore = m.sqrt(mean_squared_error(trainY[0], trainPredict[:,0]))
-print('Train Score: %.2f RMSE' % (trainScore))
-testScore = m.sqrt(mean_squared_error(testY[0], testPredict[:,0]))
-print('Test Score: %.2f RMSE' % (testScore))
+model.add(LSTM(128, activation='relu', return_sequences=True, input_shape=x_train[1].shape[0:2]))
+model.add(Dropout(0.5))
+model.add(LSTM(128, activation='relu', return_sequences=True))
+model.add(Dropout(0.5))
+model.add(LSTM(128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(np.squeeze(y_train[1].shape)))
+model.compile(optimizer='adam', loss='mse')
 
 
-trainPredictPlot = np.empty_like(Train)
-trainPredictPlot[:, :] = np.nan
-trainPredictPlot[look_back:len(trainPredict)+look_back, :] = trainPredict
-# shift test predictions for plotting
-testPredictPlot = np.empty_like(Train)
-testPredictPlot[:, :] = np.nan
-testPredictPlot[len(trainPredict)+(look_back*2)+1:len(Train)-1, :] = testPredict
-# plot baseline and predictions
-plt.plot(scaler.inverse_transform(Train))
-plt.plot(trainPredictPlot)
-plt.plot(testPredictPlot)
+
+companies = ['PMO.L', 'RDSB.L', 'EZJ.L']
+companies = ['EZJ.L']
+for share in companies:
+	model.load_weights('LSTM.hdf5')
+
+	x_train, y_train, x_test, y_test, ranges, mins, index = get_data(share)
+	model.fit(x_train, y_train,
+			  batch_size=32,
+			  epochs=10,
+			  verbose=1)
+model.save_weights('LSTM.hdf5')
+
+y_scaled_train = np.zeros([y_train.shape[0]+y_test.shape[0], 1])
+y_scaled_train[:] = np.nan
+y_scaled_train[:y_train.shape[0]] = inverse_scale(y_train, ranges, mins)
+y_scaled_train[-y_test.shape[0]:] = inverse_scale(y_test, ranges, mins)
+
+p_scaled_train = np.zeros(y_scaled_train.shape)
+p_scaled_train[:] = np.nan
+p_scaled_train[:y_train.shape[0]] = inverse_scale(model.predict(x_train), ranges, mins)
+
+p_scaled_test = np.zeros(y_scaled_train.shape)
+p_scaled_test[:] = np.nan
+p_scaled_test[-y_test.shape[0]:] = inverse_scale(model.predict(x_test), ranges, mins)
+
+
+plt.plot(index, y_scaled_train)
+plt.plot(index, p_scaled_train)
+plt.plot(index, p_scaled_test)
 plt.show()
 
-model.save('nifty_fifty.hdf5')
+plot_history(model.history)
+
+
+# error = y_test-y_pred
+# mean = np.mean(np.abs(error))
+# stddev = np.std(error)
+#
+# print(mean,stddev)
+
+# y_train = inverse_scale(y_train, ranges, mins)
+# y_pred =
+# error = y_train-y_pred
